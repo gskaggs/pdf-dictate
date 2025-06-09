@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { ArrowLeft, Save, Loader2, CheckCircle } from 'lucide-react';
+import { ArrowLeft, Save, Loader2, CheckCircle, Brain, Pause } from 'lucide-react';
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
 
@@ -14,12 +14,15 @@ export default function PdfEditor({}: PdfEditorProps) {
   const pdfName = params.name as string;
   const containerRef = useRef(null);
   const instanceRef = useRef<any>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
   
   const [pdfUrl, setPdfUrl] = useState<string>('');
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'success' | 'error'>('idle');
   const [error, setError] = useState<string>('');
+  const [isAiModeActive, setIsAiModeActive] = useState(false);
 
   // Load PDF URL
   useEffect(() => {
@@ -127,6 +130,75 @@ export default function PdfEditor({}: PdfEditorProps) {
     }
   };
 
+  const handleAiModeToggle = async () => {
+    if (!isAiModeActive) {
+      // Start AI mode
+      try {
+        // Use proper DisplayMediaStreamOptions with type casting for experimental features
+        const displayMediaOptions: DisplayMediaStreamOptions & { 
+          preferCurrentTab?: boolean;
+          selfBrowserSurface?: string;
+          surfaceSwitching?: string;
+        } = { 
+          video: {
+            displaySurface: "browser"
+          },
+          preferCurrentTab: true,
+          selfBrowserSurface: "include",
+          surfaceSwitching: "exclude"
+        };
+        
+        const stream = await navigator.mediaDevices.getDisplayMedia(displayMediaOptions);
+        streamRef.current = stream;
+        
+        const mediaRecorder = new MediaRecorder(stream);
+        mediaRecorderRef.current = mediaRecorder;
+        
+        mediaRecorder.ondataavailable = (event) => {
+          if (event.data.size > 0) {
+            console.log('Screen recording data available:', event.data);
+            // Here you would process the video data for AI analysis
+          }
+        };
+        
+        mediaRecorder.onstop = () => {
+          console.log('Screen recording stopped');
+          setIsAiModeActive(false);
+        };
+        
+        // Handle stream ending (user stops sharing)
+        stream.getVideoTracks()[0].addEventListener('ended', () => {
+          console.log('Screen sharing ended by user');
+          setIsAiModeActive(false);
+          streamRef.current = null;
+          mediaRecorderRef.current = null;
+        });
+        
+        mediaRecorder.start(1000); // Capture data every second
+        setIsAiModeActive(true);
+        console.log('AI mode started - screen capture active');
+        
+      } catch (error) {
+        console.error('Failed to start screen capture:', error);
+        alert('Failed to start screen capture. Please ensure you grant permission to share your screen.');
+      }
+    } else {
+      // Stop AI mode
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+        mediaRecorderRef.current.stop();
+      }
+      
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach(track => track.stop());
+        streamRef.current = null;
+      }
+      
+      mediaRecorderRef.current = null;
+      setIsAiModeActive(false);
+      console.log('AI mode stopped');
+    }
+  };
+
   const displayName = pdfName ? pdfName.replace(/-/g, ' ') : '';
 
   return (
@@ -147,6 +219,18 @@ export default function PdfEditor({}: PdfEditorProps) {
         </div>
         
         <div className="flex items-center space-x-2">
+          <Button 
+            onClick={handleAiModeToggle}
+            variant={isAiModeActive ? "default" : "outline"}
+            size="sm"
+          >
+            {isAiModeActive ? (
+              <Pause className="mr-2 h-3 w-3" />
+            ) : (
+              <Brain className="mr-2 h-3 w-3" />
+            )}
+            AI Mode
+          </Button>
           <Button 
             onClick={handleSave}
             disabled={isSaving || saveStatus === 'success'}
