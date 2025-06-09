@@ -1,28 +1,19 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
-import { Document, Page, pdfjs } from 'react-pdf';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Input } from '@/components/ui/input';
-import { Badge } from '@/components/ui/badge';
-import { ArrowLeft, Save, ZoomIn, ZoomOut, RotateCw, Download } from 'lucide-react';
+import { ArrowLeft, Save, Download } from 'lucide-react';
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
-
-// Set up PDF.js worker
-pdfjs.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`;
 
 interface PdfEditorProps {}
 
 export default function PdfEditor({}: PdfEditorProps) {
   const params = useParams();
   const pdfName = params.name as string;
+  const containerRef = useRef(null);
   
-  const [numPages, setNumPages] = useState<number>(0);
-  const [pageNumber, setPageNumber] = useState<number>(1);
-  const [scale, setScale] = useState<number>(1.0);
-  const [rotation, setRotation] = useState<number>(0);
   const [pdfUrl, setPdfUrl] = useState<string>('');
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
@@ -36,44 +27,54 @@ export default function PdfEditor({}: PdfEditorProps) {
     }
   }, [pdfName]);
 
-  const onDocumentLoadSuccess = useCallback(({ numPages }: { numPages: number }) => {
-    setNumPages(numPages);
-    setIsLoading(false);
-    setError('');
-  }, []);
+  // Initialize NutrientViewer
+  useEffect(() => {
+    const container = containerRef.current;
+    console.log('container', container);
+    console.log('pdfUrl', pdfUrl);
+    console.log('typeof window', typeof window);
 
-  const onDocumentLoadError = useCallback((error: Error) => {
-    setError('Failed to load PDF');
-    setIsLoading(false);
-    console.error('PDF load error:', error);
-  }, []);
+    if (container && pdfUrl && typeof window !== 'undefined') {
+      console.log('NutrientViewer loading');
+      const { NutrientViewer } = window;
+      
+      if (NutrientViewer) {
+        console.log('NutrientViewer loaded');
+        setIsLoading(true);
+        setError('');
+        
+        NutrientViewer.load({
+          container,
+          document: pdfUrl,
+        })
+        .then(() => {
+          setIsLoading(false);
+        })
+        .catch((error: Error) => {
+          setError('Failed to load PDF');
+          setIsLoading(false);
+          console.error('PDF load error:', error);
+        });
+      } else {
+        setError('NutrientViewer not available');
+        setIsLoading(false);
+      }
+    }
 
-  const handlePreviousPage = () => {
-    setPageNumber(prev => Math.max(1, prev - 1));
-  };
-
-  const handleNextPage = () => {
-    setPageNumber(prev => Math.min(numPages, prev + 1));
-  };
-
-  const handleZoomIn = () => {
-    setScale(prev => Math.min(2.0, prev + 0.2));
-  };
-
-  const handleZoomOut = () => {
-    setScale(prev => Math.max(0.5, prev - 0.2));
-  };
-
-  const handleRotate = () => {
-    setRotation(prev => (prev + 90) % 360);
-  };
+    return () => {
+      if (container && typeof window !== 'undefined') {
+        const { NutrientViewer } = window as any;
+        NutrientViewer?.unload(container);
+      }
+    };
+  }, [pdfUrl]);
 
   const handleSave = async () => {
     setIsSaving(true);
     try {
       // For now, we'll just show a message since actual PDF editing
-      // requires more complex implementation with pdf-lib
-      alert('PDF editing functionality will be implemented with pdf-lib for form fields and annotations');
+      // requires more complex implementation with NutrientViewer API
+      alert('PDF editing functionality will be implemented with NutrientViewer API');
     } catch (error) {
       console.error('Save error:', error);
       alert('Failed to save PDF');
@@ -130,112 +131,43 @@ export default function PdfEditor({}: PdfEditorProps) {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
-        {/* Controls Panel */}
-        <Card className="lg:col-span-1">
-          <CardHeader>
-            <CardTitle>Controls</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            {/* Page Navigation */}
-            <div>
-              <label className="text-sm font-medium">Page Navigation</label>
-              <div className="flex items-center space-x-2 mt-2">
-                <Button
-                  onClick={handlePreviousPage}
-                  disabled={pageNumber <= 1}
-                  variant="outline"
-                  size="sm"
-                >
-                  Previous
-                </Button>
-                <div className="flex items-center space-x-1">
-                  <Input
-                    type="number"
-                    value={pageNumber}
-                    onChange={(e) => setPageNumber(Math.max(1, Math.min(numPages, parseInt(e.target.value) || 1)))}
-                    className="w-16 text-center"
-                    min={1}
-                    max={numPages}
-                  />
-                  <span className="text-sm text-muted-foreground">/ {numPages}</span>
-                </div>
-                <Button
-                  onClick={handleNextPage}
-                  disabled={pageNumber >= numPages}
-                  variant="outline"
-                  size="sm"
-                >
-                  Next
-                </Button>
-              </div>
-            </div>
-
-            {/* Zoom Controls */}
-            <div>
-              <label className="text-sm font-medium">Zoom</label>
-              <div className="flex items-center space-x-2 mt-2">
-                <Button onClick={handleZoomOut} variant="outline" size="sm">
-                  <ZoomOut className="h-3 w-3" />
-                </Button>
-                <Badge variant="secondary">{Math.round(scale * 100)}%</Badge>
-                <Button onClick={handleZoomIn} variant="outline" size="sm">
-                  <ZoomIn className="h-3 w-3" />
-                </Button>
-              </div>
-            </div>
-
-            {/* Rotation */}
-            <div>
-              <label className="text-sm font-medium">Rotation</label>
-              <div className="flex items-center space-x-2 mt-2">
-                <Button onClick={handleRotate} variant="outline" size="sm">
-                  <RotateCw className="mr-2 h-3 w-3" />
-                  Rotate 90°
-                </Button>
-                <Badge variant="secondary">{rotation}°</Badge>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* PDF Viewer */}
-        <Card className="lg:col-span-3">
-          <CardContent className="p-6">
+      {/* PDF Viewer */}
+      <Card>
+        <CardContent className="p-0">
+          {/* Wrapper for container and overlays */}
+          <div 
+            style={{ 
+              height: "80vh", 
+              width: "100%",
+              minHeight: "600px",
+              position: "relative"
+            }} 
+          >
+            {/* Empty container for NutrientViewer - must be empty! */}
+            <div 
+              ref={containerRef} 
+              style={{ 
+                height: "100%", 
+                width: "100%"
+              }} 
+            />
+            
+            {/* Loading overlay */}
             {isLoading && (
-              <div className="flex items-center justify-center h-96">
+              <div className="absolute inset-0 flex items-center justify-center bg-background/80 backdrop-blur-sm z-10">
                 <div className="text-muted-foreground">Loading PDF...</div>
               </div>
             )}
             
+            {/* Error overlay */}
             {error && (
-              <div className="flex items-center justify-center h-96">
+              <div className="absolute inset-0 flex items-center justify-center bg-background/80 backdrop-blur-sm z-10">
                 <div className="text-destructive">{error}</div>
               </div>
             )}
-
-            {pdfUrl && !isLoading && !error && (
-              <div className="flex justify-center">
-                <Document
-                  file={pdfUrl}
-                  onLoadSuccess={onDocumentLoadSuccess}
-                  onLoadError={onDocumentLoadError}
-                  loading={<div>Loading PDF...</div>}
-                  error={<div>Failed to load PDF</div>}
-                >
-                  <Page
-                    pageNumber={pageNumber}
-                    scale={scale}
-                    rotate={rotation}
-                    loading={<div>Loading page...</div>}
-                    error={<div>Failed to load page</div>}
-                  />
-                </Document>
-              </div>
-            )}
-          </CardContent>
-        </Card>
-      </div>
+          </div>
+        </CardContent>
+      </Card>
     </div>
   );
 } 

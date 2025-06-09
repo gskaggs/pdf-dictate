@@ -42,3 +42,6 @@ next-env.d.ts
 
 # uploaded PDFs (local storage)
 /public/pdfs/
+
+# nutrient viewer assets
+/public/nutrient-viewer/

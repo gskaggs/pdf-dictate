@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
+import Script from "next/script";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -24,9 +25,14 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
-      <body
-        className={`${geistSans.variable} ${geistMono.variable} antialiased`}
-      >
+      <head>
+        <Script
+          src="https://cdn.cloud.pspdfkit.com/pspdfkit-web@1.0.0/nutrient-viewer.js"
+          // Load before the page becomes interactive to reference window.NutrientViewer in the client
+          strategy="beforeInteractive"
+        />
+      </head>
+      <body>
         {children}
       </body>
     </html>
