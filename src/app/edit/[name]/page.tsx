@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { ArrowLeft, Save, Download } from 'lucide-react';
+import { ArrowLeft, Save, Loader2, CheckCircle } from 'lucide-react';
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
 
@@ -13,10 +13,12 @@ export default function PdfEditor({}: PdfEditorProps) {
   const params = useParams();
   const pdfName = params.name as string;
   const containerRef = useRef(null);
+  const instanceRef = useRef<any>(null);
   
   const [pdfUrl, setPdfUrl] = useState<string>('');
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
+  const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'success' | 'error'>('idle');
   const [error, setError] = useState<string>('');
 
   // Load PDF URL
@@ -47,8 +49,10 @@ export default function PdfEditor({}: PdfEditorProps) {
           container,
           document: pdfUrl,
         })
-        .then(() => {
+        .then((instance) => {
+          instanceRef.current = instance;
           setIsLoading(false);
+          console.log('NutrientViewer instance', instance);
         })
         .catch((error: Error) => {
           setError('Failed to load PDF');
@@ -65,31 +69,62 @@ export default function PdfEditor({}: PdfEditorProps) {
       if (container && typeof window !== 'undefined') {
         const { NutrientViewer } = window as any;
         NutrientViewer?.unload(container);
+        instanceRef.current = null;
       }
     };
   }, [pdfUrl]);
 
   const handleSave = async () => {
+    if (!instanceRef.current) {
+      alert('PDF not loaded yet. Please wait for the PDF to load before saving.');
+      return;
+    }
+
     setIsSaving(true);
+    setSaveStatus('saving');
     try {
-      // For now, we'll just show a message since actual PDF editing
-      // requires more complex implementation with NutrientViewer API
-      alert('PDF editing functionality will be implemented with NutrientViewer API');
+      // Export PDF using the stored instance
+      const documentBuffer = await instanceRef.current.exportPDF();
+      
+      // Create a blob from the buffer
+      const blob = new Blob([documentBuffer], { type: 'application/pdf' });
+      
+      // Create FormData to send to the API
+      const formData = new FormData();
+      formData.append('file', blob, `${pdfName}.pdf`);
+      
+      // Send to save API endpoint
+      const response = await fetch(`/api/pdfs/${pdfName}/save`, {
+        method: 'POST',
+        body: formData,
+      });
+      
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to save PDF');
+      }
+      
+      const result = await response.json();
+      console.log('PDF saved successfully:', result);
+      setSaveStatus('success');
+      
+      // Reset to idle after 2 seconds
+      setTimeout(() => {
+        setSaveStatus('idle');
+      }, 2000);
+      
     } catch (error) {
       console.error('Save error:', error);
-      alert('Failed to save PDF');
+      setSaveStatus('error');
+      alert(`Failed to save PDF: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      
+      // Reset to idle after showing error
+      setTimeout(() => {
+        setSaveStatus('idle');
+      }, 1000);
     } finally {
       setIsSaving(false);
     }
-  };
-
-  const handleDownload = () => {
-    const link = document.createElement('a');
-    link.href = pdfUrl;
-    link.download = `${pdfName}.pdf`;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
   };
 
   const displayName = pdfName ? pdfName.replace(/-/g, ' ') : '';
@@ -113,20 +148,14 @@ export default function PdfEditor({}: PdfEditorProps) {
         
         <div className="flex items-center space-x-2">
           <Button 
-            onClick={handleDownload}
-            variant="outline"
-            size="sm"
-          >
-            <Download className="mr-2 h-3 w-3" />
-            Download
-          </Button>
-          <Button 
             onClick={handleSave}
-            disabled={isSaving}
+            disabled={isSaving || saveStatus === 'success'}
             size="sm"
           >
-            <Save className="mr-2 h-3 w-3" />
-            {isSaving ? 'Saving...' : 'Save'}
+            {saveStatus === 'saving' && <Loader2 className="mr-2 h-3 w-3 animate-spin" />}
+            {saveStatus === 'success' && <CheckCircle className="mr-2 h-3 w-3" />}
+            {(saveStatus === 'idle' || saveStatus === 'error') && <Save className="mr-2 h-3 w-3" />}
+            Save
           </Button>
         </div>
       </div>
