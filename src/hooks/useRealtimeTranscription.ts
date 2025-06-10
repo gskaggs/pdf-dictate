@@ -37,6 +37,7 @@ export interface UseRealtimeTranscriptionReturn {
   clearLogs: () => void;
   clearTranscript: () => void;
   clearError: () => void;
+  connectAndStartRecording: () => Promise<void>;
   
   // WebSocket state
   isWebSocketConnected: boolean;
@@ -129,6 +130,47 @@ export const useRealtimeTranscription = (): UseRealtimeTranscriptionReturn => {
     }
   }, []);
 
+  const setupWebSocketHandlers = useCallback((ws: WebSocket) => {
+    ws.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        addEventLog(data.type, 'incoming', data);
+        
+        // Handle different message types
+        switch (data.type) {
+          case 'conversation.item.input_audio_transcription.delta':
+            if (data.transcript) {
+              setTranscript(prev => prev + data.transcript);
+            }
+            break;
+          case 'conversation.item.input_audio_transcription.completed':
+            if (data.transcript) {
+              setTranscript(prev => prev + '\n' + data.transcript);
+            }
+            break;
+          case 'error':
+            setError(`WebSocket error: ${data.error?.message || 'Unknown error'}`);
+            break;
+        }
+      } catch (err) {
+        console.error('Error parsing WebSocket message:', err);
+      }
+    };
+
+    ws.onerror = (error) => {
+      console.error('WebSocket error:', error);
+      addEventLog('connection.error', 'incoming', { error: error.toString() });
+      setError('WebSocket connection error');
+      setSessionStatus('DISCONNECTED');
+    };
+
+    ws.onclose = () => {
+      console.log('WebSocket closed');
+      addEventLog('connection.closed', 'incoming', { status: 'closed' });
+      setIsRecording(false);
+    };
+  }, [addEventLog]);
+
   const connectWebSocket = useCallback(async () => {
     if (!ephemeralKey) {
       setError("No ephemeral key available");
@@ -142,6 +184,8 @@ export const useRealtimeTranscription = (): UseRealtimeTranscriptionReturn => {
         `openai-insecure-api-key.${ephemeralKey}`,
         "openai-beta.realtime-v1"
       ]);
+
+      setupWebSocketHandlers(wsRef.current);
 
       wsRef.current.onopen = () => {
         console.log('WebSocket connected');
@@ -167,48 +211,10 @@ export const useRealtimeTranscription = (): UseRealtimeTranscriptionReturn => {
         addEventLog('transcription_session.update', 'outgoing', sessionUpdate);
       };
 
-      wsRef.current.onmessage = (event) => {
-        try {
-          const data = JSON.parse(event.data);
-          addEventLog(data.type, 'incoming', data);
-          
-          // Handle different message types
-          switch (data.type) {
-            case 'conversation.item.input_audio_transcription.delta':
-              if (data.transcript) {
-                setTranscript(prev => prev + data.transcript);
-              }
-              break;
-            case 'conversation.item.input_audio_transcription.completed':
-              if (data.transcript) {
-                setTranscript(prev => prev + '\n' + data.transcript);
-              }
-              break;
-            case 'error':
-              setError(`WebSocket error: ${data.error?.message || 'Unknown error'}`);
-              break;
-          }
-        } catch (err) {
-          console.error('Error parsing WebSocket message:', err);
-        }
-      };
-
-      wsRef.current.onerror = (error) => {
-        console.error('WebSocket error:', error);
-        addEventLog('connection.error', 'incoming', { error: error.toString() });
-        setError('WebSocket connection error');
-      };
-
-      wsRef.current.onclose = () => {
-        console.log('WebSocket closed');
-        addEventLog('connection.closed', 'incoming', { status: 'closed' });
-        setIsRecording(false);
-      };
-
     } catch (err) {
       setError(`Failed to connect WebSocket: ${err}`);
     }
-  }, [ephemeralKey, addEventLog]);
+  }, [ephemeralKey, addEventLog, setupWebSocketHandlers]);
 
   const startRecording = useCallback(async () => {
     try {
@@ -289,6 +295,7 @@ export const useRealtimeTranscription = (): UseRealtimeTranscriptionReturn => {
     if (streamRef.current) {
       streamRef.current.getTracks().forEach(track => track.stop());
       streamRef.current = null;
+      console.log('stream ref deactivated');
     }
     
     setIsRecording(false);
@@ -306,6 +313,139 @@ export const useRealtimeTranscription = (): UseRealtimeTranscriptionReturn => {
   const clearError = useCallback(() => {
     setError(null);
   }, []);
+
+  const connectAndStartRecording = useCallback(async () => {
+    try {
+      setIsLoading(true);
+      setError(null);
+      
+      // Step 1: Fetch ephemeral key
+      const key = await fetchEphemeralKeyInternal();
+      if (!key) {
+        setError("Failed to fetch ephemeral key");
+        return;
+      }
+      setEphemeralKey(key);
+      
+      // Step 2: Connect WebSocket
+      const wsUrl = `wss://api.openai.com/v1/realtime?intent=transcription`;
+      wsRef.current = new WebSocket(wsUrl, [
+        "realtime",
+        `openai-insecure-api-key.${key}`,
+        "openai-beta.realtime-v1"
+      ]);
+
+      setupWebSocketHandlers(wsRef.current);
+
+      // Wait for WebSocket to connect and then start recording
+      return new Promise<void>((resolve, reject) => {
+        if (!wsRef.current) {
+          reject(new Error("Failed to create WebSocket"));
+          return;
+        }
+
+        wsRef.current.onopen = async () => {
+          console.log('WebSocket connected');
+          addEventLog('connection.opened', 'incoming', { status: 'connected' });
+          setSessionStatus('CONNECTED');
+          
+          // Send session update
+          const sessionUpdate = {
+            type: "transcription_session.update",
+            session: {
+              input_audio_transcription: {
+                model: "gpt-4o-mini-transcribe",
+                language: "en"
+              },
+              turn_detection: {
+                type: "server_vad",
+                silence_duration_ms: 800,
+                threshold: 0.5
+              }
+            }
+          };
+          
+          wsRef.current?.send(JSON.stringify(sessionUpdate));
+          addEventLog('transcription_session.update', 'outgoing', sessionUpdate);
+          
+          // Step 3: Start recording after WebSocket is ready
+          try {
+            // Get microphone access
+            const stream = await navigator.mediaDevices.getUserMedia({
+              audio: {
+                sampleRate: 24000,
+                channelCount: 1,
+                echoCancellation: true,
+                noiseSuppression: true,
+                autoGainControl: true
+              }
+            });
+
+            streamRef.current = stream;
+            
+            // Create audio context
+            audioContextRef.current = new AudioContext({ sampleRate: 24000 });
+            sourceRef.current = audioContextRef.current.createMediaStreamSource(stream);
+            
+            // Create processor for audio data
+            processorRef.current = audioContextRef.current.createScriptProcessor(4096, 1, 1);
+            
+            processorRef.current.onaudioprocess = (event) => {
+              if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
+              
+              const inputBuffer = event.inputBuffer;
+              const inputData = inputBuffer.getChannelData(0);
+              
+              // Convert float32 to int16
+              const int16Array = new Int16Array(inputData.length);
+              for (let i = 0; i < inputData.length; i++) {
+                int16Array[i] = Math.max(-1, Math.min(1, inputData[i])) * 0x7FFF;
+              }
+              
+              // Convert to base64
+              const bytes = new Uint8Array(int16Array.buffer);
+              const base64 = btoa(String.fromCharCode(...bytes));
+              
+              // Send audio data
+              const audioMessage = {
+                type: 'input_audio_buffer.append',
+                audio: base64
+              };
+              
+              wsRef.current.send(JSON.stringify(audioMessage));
+              addEventLog('input_audio_buffer.append', 'outgoing', { size: base64.length });
+            };
+            
+            sourceRef.current.connect(processorRef.current);
+            processorRef.current.connect(audioContextRef.current.destination);
+            
+            setIsRecording(true);
+            addEventLog('recording.started', 'outgoing', { status: 'started' });
+            
+            resolve();
+          } catch (error) {
+            setError(`Failed to start recording: ${error}`);
+            reject(error);
+          }
+        };
+
+        // Override the error handler to also reject the promise
+        wsRef.current.onerror = (error) => {
+          console.error('WebSocket error:', error);
+          addEventLog('connection.error', 'incoming', { error: error.toString() });
+          setError('WebSocket connection error');
+          setSessionStatus('DISCONNECTED');
+          reject(new Error('WebSocket connection error'));
+        };
+      });
+    } catch (err) {
+      setError(`Failed to connect and start recording: ${err}`);
+      setSessionStatus('DISCONNECTED');
+      throw err;
+    } finally {
+      setIsLoading(false);
+    }
+  }, [addEventLog, setupWebSocketHandlers]);
 
   return {
     // State
@@ -325,6 +465,7 @@ export const useRealtimeTranscription = (): UseRealtimeTranscriptionReturn => {
     clearLogs,
     clearTranscript,
     clearError,
+    connectAndStartRecording,
     
     // WebSocket state
     isWebSocketConnected,
