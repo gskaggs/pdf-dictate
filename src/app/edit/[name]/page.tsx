@@ -3,9 +3,10 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { ArrowLeft, Save, Loader2, CheckCircle, Brain, Pause } from 'lucide-react';
+import { ArrowLeft, Save, Loader2, CheckCircle, Brain, Pause, Mic, Square } from 'lucide-react';
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
+import { useRealtimeTranscription } from '@/hooks/useRealtimeTranscription';
 
 interface PdfEditorProps {}
 
@@ -23,6 +24,18 @@ export default function PdfEditor({}: PdfEditorProps) {
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'success' | 'error'>('idle');
   const [error, setError] = useState<string>('');
   const [isAiModeActive, setIsAiModeActive] = useState(false);
+
+  // Transcription hook
+  const {
+    transcript,
+    isRecording,
+    sessionStatus,
+    isWebSocketConnected,
+    connectAndStartRecording,
+    stopRecording,
+    clearTranscript,
+    error: transcriptionError
+  } = useRealtimeTranscription();
 
   // Load PDF URL
   useEffect(() => {
@@ -132,9 +145,9 @@ export default function PdfEditor({}: PdfEditorProps) {
 
   const handleAiModeToggle = async () => {
     if (!isAiModeActive) {
-      // Start AI mode
+      // Start AI mode - both screen capture AND transcription
       try {
-        // Use proper DisplayMediaStreamOptions with type casting for experimental features
+        // 1. Start screen capture (existing functionality)
         const displayMediaOptions: DisplayMediaStreamOptions & { 
           preferCurrentTab?: boolean;
           selfBrowserSurface?: string;
@@ -163,7 +176,6 @@ export default function PdfEditor({}: PdfEditorProps) {
         
         mediaRecorder.onstop = () => {
           console.log('Screen recording stopped');
-          setIsAiModeActive(false);
         };
         
         // Handle stream ending (user stops sharing)
@@ -172,18 +184,28 @@ export default function PdfEditor({}: PdfEditorProps) {
           setIsAiModeActive(false);
           streamRef.current = null;
           mediaRecorderRef.current = null;
+          // Also stop transcription when screen sharing ends
+          if (isRecording) {
+            stopRecording();
+          }
         });
         
         mediaRecorder.start(1000); // Capture data every second
+        
+        // 2. Start transcription
+        await connectAndStartRecording();
+
         setIsAiModeActive(true);
-        console.log('AI mode started - screen capture active');
+        console.log('AI mode started - screen capture and transcription active');
         
       } catch (error) {
-        console.error('Failed to start screen capture:', error);
-        alert('Failed to start screen capture. Please ensure you grant permission to share your screen.');
+        console.error('Failed to start AI mode:', error);
+        alert('Failed to start AI mode. Please ensure you grant permission to share your screen and access your microphone.');
       }
     } else {
-      // Stop AI mode
+      // Stop AI mode - both screen capture AND transcription
+      
+      // Stop screen capture
       if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
         mediaRecorderRef.current.stop();
       }
@@ -194,6 +216,13 @@ export default function PdfEditor({}: PdfEditorProps) {
       }
       
       mediaRecorderRef.current = null;
+      
+      // Stop transcription
+      console.log(isRecording);
+      if (isRecording) {
+        stopRecording();
+      }
+      
       setIsAiModeActive(false);
       console.log('AI mode stopped');
     }
@@ -244,43 +273,129 @@ export default function PdfEditor({}: PdfEditorProps) {
         </div>
       </div>
 
-      {/* PDF Viewer */}
-      <Card>
-        <CardContent className="p-0">
-          {/* Wrapper for container and overlays */}
-          <div 
-            style={{ 
-              height: "80vh", 
-              width: "100%",
-              minHeight: "600px",
-              position: "relative"
-            }} 
-          >
-            {/* Empty container for NutrientViewer - must be empty! */}
-            <div 
-              ref={containerRef} 
-              style={{ 
-                height: "100%", 
-                width: "100%"
-              }} 
-            />
-            
-            {/* Loading overlay */}
-            {isLoading && (
-              <div className="absolute inset-0 flex items-center justify-center bg-background/80 backdrop-blur-sm z-10">
-                <div className="text-muted-foreground">Loading PDF...</div>
+      {/* Main Content Area */}
+      <div className="flex gap-6 transition-all duration-500 ease-in-out">
+        {/* PDF Viewer */}
+        <div className={`transition-all duration-500 ease-in-out ${
+          isAiModeActive ? 'w-2/3' : 'w-full'
+        }`}>
+          <Card>
+            <CardContent className="p-0">
+              {/* Wrapper for container and overlays */}
+              <div 
+                style={{ 
+                  height: "80vh", 
+                  width: "100%",
+                  minHeight: "600px",
+                  position: "relative"
+                }} 
+              >
+                {/* Empty container for NutrientViewer - must be empty! */}
+                <div 
+                  ref={containerRef} 
+                  style={{ 
+                    height: "100%", 
+                    width: "100%"
+                  }} 
+                />
+                
+                {/* Loading overlay */}
+                {isLoading && (
+                  <div className="absolute inset-0 flex items-center justify-center bg-background/80 backdrop-blur-sm z-10">
+                    <div className="text-muted-foreground">Loading PDF...</div>
+                  </div>
+                )}
+                
+                {/* Error overlay */}
+                {error && (
+                  <div className="absolute inset-0 flex items-center justify-center bg-background/80 backdrop-blur-sm z-10">
+                    <div className="text-destructive">{error}</div>
+                  </div>
+                )}
               </div>
-            )}
-            
-            {/* Error overlay */}
-            {error && (
-              <div className="absolute inset-0 flex items-center justify-center bg-background/80 backdrop-blur-sm z-10">
-                <div className="text-destructive">{error}</div>
-              </div>
-            )}
-          </div>
-        </CardContent>
-      </Card>
+            </CardContent>
+          </Card>
+        </div>
+
+        {/* Transcript Panel - Slides in from right */}
+        <div className={`transition-all duration-500 ease-in-out overflow-hidden ${
+          isAiModeActive ? 'w-1/3 opacity-100 translate-x-0' : 'w-0 opacity-0 translate-x-full'
+        }`}>
+          {isAiModeActive && (
+            <Card className="h-full">
+              <CardHeader className="pb-3">
+                <div className="flex items-center justify-between">
+                  <CardTitle className="text-lg flex items-center gap-2">
+                    AI Transcript
+                    <div className="flex items-center gap-1">
+                      {isRecording && (
+                        <div className="w-2 h-2 bg-red-500 rounded-full animate-pulse"></div>
+                      )}
+                      {sessionStatus === 'CONNECTED' && (
+                        <div className="w-2 h-2 bg-green-500 rounded-full"></div>
+                      )}
+                    </div>
+                  </CardTitle>
+                  <div className="flex gap-1">
+                    <Button
+                      onClick={clearTranscript}
+                      size="sm"
+                      variant="outline"
+                      className="h-7 px-2 text-xs"
+                    >
+                      Clear
+                    </Button>
+                  </div>
+                </div>
+                <p className="text-sm text-muted-foreground">
+                  Live transcription of your voice
+                </p>
+              </CardHeader>
+              <CardContent className="pt-0">
+                {transcriptionError && (
+                  <div className="mb-3 p-2 bg-destructive/10 border border-destructive/20 rounded text-xs">
+                    <p className="text-destructive">{transcriptionError}</p>
+                  </div>
+                )}
+                
+                <div 
+                  className="h-[calc(80vh-200px)] overflow-y-auto p-3 bg-muted rounded-md text-sm"
+                  style={{ minHeight: "400px" }}
+                >
+                  <pre className="whitespace-pre-wrap font-mono text-xs leading-relaxed">
+                    {transcript || (
+                      <span className="text-muted-foreground italic">
+                        {isRecording 
+                          ? "Listening... Start speaking to see transcription here."
+                          : sessionStatus === 'CONNECTED' 
+                          ? "AI Mode active. Microphone ready."
+                          : "Connecting to transcription service..."
+                        }
+                      </span>
+                    )}
+                  </pre>
+                </div>
+                
+                {/* Status indicator */}
+                <div className="mt-3 flex items-center justify-between text-xs text-muted-foreground">
+                  <div className="flex items-center gap-2">
+                    <Mic className="w-3 h-3" />
+                    <span>
+                      {isRecording ? 'Recording' : 'Standby'}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <div className={`w-2 h-2 rounded-full ${
+                      sessionStatus === 'CONNECTED' ? 'bg-green-500' : 'bg-gray-400'
+                    }`} />
+                    <span>{sessionStatus}</span>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+        </div>
+      </div>
     </div>
   );
 } 
