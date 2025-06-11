@@ -17,6 +17,8 @@ export default function PdfEditor({}: PdfEditorProps) {
   const instanceRef = useRef<any>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  const transcriptRef = useRef<string>('');
+  const isAiModeActiveRef = useRef<boolean>(false);
   
   const [pdfUrl, setPdfUrl] = useState<string>('');
   const [isLoading, setIsLoading] = useState(true);
@@ -38,9 +40,21 @@ export default function PdfEditor({}: PdfEditorProps) {
     error: transcriptionError
   } = useRealtimeTranscription();
 
-  // Function to get AI suggestions
-  const getAiSuggestions = useCallback(async (annotationData?: any) => {
-    if (!isAiModeActive) return;
+  // Update refs when values change
+  useEffect(() => {
+    transcriptRef.current = transcript;
+  }, [transcript]);
+
+  useEffect(() => {
+    isAiModeActiveRef.current = isAiModeActive;
+  }, [isAiModeActive]);
+
+  // Function to get AI suggestions that doesn't depend on transcript in closure
+  const getAiSuggestionsWithCurrentData = useCallback(async (annotationData?: any) => {
+    const currentTranscript = transcriptRef.current;
+    const currentIsAiModeActive = isAiModeActiveRef.current;
+    
+    if (!currentIsAiModeActive) return;
 
     try {
       let screenImage = null;
@@ -75,7 +89,7 @@ export default function PdfEditor({}: PdfEditorProps) {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          transcript: transcript || '',
+          transcript: currentTranscript || '',
           screenImage,
           annotationData // Include the annotation data for context
         }),
@@ -98,7 +112,7 @@ export default function PdfEditor({}: PdfEditorProps) {
       console.error('Error getting AI suggestions:', error);
       setAiSuggestion('');
     }
-  }, [isAiModeActive, transcript]);
+  }, []); // Empty dependency array since we use refs for current values
 
   // Load PDF URL
   useEffect(() => {
@@ -135,17 +149,15 @@ export default function PdfEditor({}: PdfEditorProps) {
           instance.addEventListener("annotations.focus", function (annotationFocusEvent) {
             console.log(annotationFocusEvent.annotation.toJS());
             
-            // Get AI suggestions if AI mode is active
-            if (isAiModeActive) {
-              getAiSuggestions(annotationFocusEvent.annotation.toJS());
-            }
+            // Get AI suggestions if AI mode is active - using function that accesses current values
+            getAiSuggestionsWithCurrentData(annotationFocusEvent.annotation.toJS());
           });
 
           instance.addEventListener("annotations.blur", function (annotationBlurEvent) {
             console.log(annotationBlurEvent.annotation.toJS());
             
-            // Clear AI suggestion when field loses focus
-            if (isAiModeActive) {
+            // Clear AI suggestion when field loses focus - check current AI mode state
+            if (isAiModeActiveRef.current) {
               setAiSuggestion('');
             }
           });
@@ -168,7 +180,7 @@ export default function PdfEditor({}: PdfEditorProps) {
         instanceRef.current = null;
       }
     };
-  }, [pdfUrl, isAiModeActive, getAiSuggestions]);
+  }, [pdfUrl, isAiModeActive]);
 
   const handleSave = async () => {
     if (!instanceRef.current) {
