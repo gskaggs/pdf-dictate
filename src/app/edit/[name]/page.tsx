@@ -68,7 +68,14 @@ export default function PdfEditor({}: PdfEditorProps) {
         .then((instance) => {
           instanceRef.current = instance;
           setIsLoading(false);
-          console.log('NutrientViewer instance', instance);
+
+          instance.addEventListener("annotations.focus", function (annotationFocusEvent) {
+            console.log(annotationFocusEvent.annotation.toJS());
+          });
+
+          instance.addEventListener("annotations.blur", function (annotationBlurEvent) {
+            console.log(annotationBlurEvent.annotation.toJS());
+          })
         })
         .catch((error: Error) => {
           setError('Failed to load PDF');
