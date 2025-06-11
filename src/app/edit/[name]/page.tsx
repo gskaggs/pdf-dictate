@@ -438,24 +438,9 @@ export default function PdfEditor({}: PdfEditorProps) {
                   </div>
                 )}
                 
-                {/* AI Suggestion Section - Fixed height to prevent layout shift */}
-                <div className="mb-3 h-20 overflow-hidden">
-                  {aiSuggestion && (
-                    <div className="p-3 bg-blue-50 border border-blue-200 rounded-md">
-                      <div className="flex items-start gap-2">
-                        <Brain className="w-4 h-4 text-blue-600 mt-0.5 flex-shrink-0" />
-                        <div>
-                          <p className="text-xs font-medium text-blue-800 mb-1">AI Suggestion</p>
-                          <p className="text-xs text-blue-700 leading-relaxed">{aiSuggestion}</p>
-                        </div>
-                      </div>
-                    </div>
-                  )}
-                </div>
-                
                 <div 
-                  className="h-[calc(80vh-300px)] overflow-y-auto p-3 bg-muted rounded-md text-sm"
-                  style={{ minHeight: "320px" }}
+                  className="h-[calc(80vh-200px)] overflow-y-auto p-3 bg-muted rounded-md text-sm mb-3"
+                  style={{ minHeight: "400px" }}
                 >
                   <pre className="whitespace-pre-wrap font-mono text-xs leading-relaxed">
                     {transcript || (
@@ -472,7 +457,7 @@ export default function PdfEditor({}: PdfEditorProps) {
                 </div>
                 
                 {/* Status indicator */}
-                <div className="mt-3 flex items-center justify-between text-xs text-muted-foreground">
+                <div className="mb-3 flex items-center justify-between text-xs text-muted-foreground">
                   <div className="flex items-center gap-2">
                     <Mic className="w-3 h-3" />
                     <span>
@@ -485,6 +470,21 @@ export default function PdfEditor({}: PdfEditorProps) {
                     }`} />
                     <span>{sessionStatus}</span>
                   </div>
+                </div>
+                
+                {/* AI Suggestion Section - Fixed height to prevent layout shift */}
+                <div className="h-20 overflow-hidden">
+                  {aiSuggestion && (
+                    <div className="p-3 bg-blue-50 border border-blue-200 rounded-md">
+                      <div className="flex items-start gap-2">
+                        <Brain className="w-4 h-4 text-blue-600 mt-0.5 flex-shrink-0" />
+                        <div>
+                          <p className="text-xs font-medium text-blue-800 mb-1">AI Suggestion</p>
+                          <p className="text-xs text-blue-700 leading-relaxed">{aiSuggestion}</p>
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </div>
               </CardContent>
             </Card>
