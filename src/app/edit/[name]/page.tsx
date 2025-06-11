@@ -24,6 +24,7 @@ export default function PdfEditor({}: PdfEditorProps) {
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'success' | 'error'>('idle');
   const [error, setError] = useState<string>('');
   const [isAiModeActive, setIsAiModeActive] = useState(false);
+  const [aiSuggestion, setAiSuggestion] = useState<string>('');
 
   // Transcription hook
   const {
@@ -83,14 +84,19 @@ export default function PdfEditor({}: PdfEditorProps) {
       if (response.ok) {
         const data = await response.json();
         console.log('AI Suggestions Response:', data);
-        if (data.suggestion) {
+        if (data.suggestion && data.suggestion !== 'NO_SUGGESTION') {
           console.log('AI Suggestion:', data.suggestion);
+          setAiSuggestion(data.suggestion);
+        } else {
+          setAiSuggestion('');
         }
       } else {
         console.error('Failed to get AI suggestions:', response.status);
+        setAiSuggestion('');
       }
     } catch (error) {
       console.error('Error getting AI suggestions:', error);
+      setAiSuggestion('');
     }
   }, [isAiModeActive, transcript]);
 
@@ -137,6 +143,11 @@ export default function PdfEditor({}: PdfEditorProps) {
 
           instance.addEventListener("annotations.blur", function (annotationBlurEvent) {
             console.log(annotationBlurEvent.annotation.toJS());
+            
+            // Clear AI suggestion when field loses focus
+            if (isAiModeActive) {
+              setAiSuggestion('');
+            }
           });
         })
         .catch((error: Error) => {
@@ -427,9 +438,24 @@ export default function PdfEditor({}: PdfEditorProps) {
                   </div>
                 )}
                 
+                {/* AI Suggestion Section - Fixed height to prevent layout shift */}
+                <div className="mb-3 h-20 overflow-hidden">
+                  {aiSuggestion && (
+                    <div className="p-3 bg-blue-50 border border-blue-200 rounded-md">
+                      <div className="flex items-start gap-2">
+                        <Brain className="w-4 h-4 text-blue-600 mt-0.5 flex-shrink-0" />
+                        <div>
+                          <p className="text-xs font-medium text-blue-800 mb-1">AI Suggestion</p>
+                          <p className="text-xs text-blue-700 leading-relaxed">{aiSuggestion}</p>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+                
                 <div 
-                  className="h-[calc(80vh-200px)] overflow-y-auto p-3 bg-muted rounded-md text-sm"
-                  style={{ minHeight: "400px" }}
+                  className="h-[calc(80vh-300px)] overflow-y-auto p-3 bg-muted rounded-md text-sm"
+                  style={{ minHeight: "320px" }}
                 >
                   <pre className="whitespace-pre-wrap font-mono text-xs leading-relaxed">
                     {transcript || (

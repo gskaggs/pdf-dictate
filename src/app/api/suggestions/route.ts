@@ -14,7 +14,7 @@ export async function POST(request: NextRequest) {
     const messages: any[] = [
       {
         role: "system",
-        content: "You are an AI assistant that helps users edit PDF forms efficiently. Based on the user's voice transcript and/or screen image, provide helpful suggestions for filling out or editing the current form field that has focus. Be concise and actionable."
+        content: "You are an AI assistant that helps users edit PDF forms efficiently. Based on the user's voice transcript and/or screen image, provide helpful suggestions for filling out or editing the current form field that has focus. Be concise and actionable. If you have a specific suggestion, respond with just the suggestion text. If you don't have a relevant suggestion, respond with exactly 'NO_SUGGESTION'."
       }
     ];
 
@@ -55,7 +55,7 @@ export async function POST(request: NextRequest) {
 
     messages.push({
       role: "user",
-      content: `Based on the context above, what suggestions do you have for editing the current form field? Provide specific, actionable advice.`
+      content: `Based on the context above, what suggestions do you have for editing the current form field? Respond with just your suggestion if you have one, or 'NO_SUGGESTION' if you don't have a specific actionable suggestion.`
     });
 
     const response = await fetch("https://api.openai.com/v1/chat/completions", {
