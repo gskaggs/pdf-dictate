@@ -37,6 +37,63 @@ export default function PdfEditor({}: PdfEditorProps) {
     error: transcriptionError
   } = useRealtimeTranscription();
 
+  // Function to get AI suggestions
+  const getAiSuggestions = useCallback(async (annotationData?: any) => {
+    if (!isAiModeActive) return;
+
+    try {
+      let screenImage = null;
+      
+      // Capture current screen if we have an active stream
+      if (streamRef.current) {
+        const canvas = document.createElement('canvas');
+        const video = document.createElement('video');
+        
+        // Create a new stream from the current one to capture a frame
+        const track = streamRef.current.getVideoTracks()[0];
+        if (track) {
+          video.srcObject = new MediaStream([track]);
+          video.play();
+          
+          await new Promise(resolve => {
+            video.onloadedmetadata = () => {
+              canvas.width = video.videoWidth;
+              canvas.height = video.videoHeight;
+              const ctx = canvas.getContext('2d');
+              ctx?.drawImage(video, 0, 0);
+              screenImage = canvas.toDataURL('image/jpeg', 0.8);
+              resolve(null);
+            };
+          });
+        }
+      }
+
+      const response = await fetch('/api/suggestions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          transcript: transcript || '',
+          screenImage,
+          annotationData // Include the annotation data for context
+        }),
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        console.log('AI Suggestions Response:', data);
+        if (data.suggestion) {
+          console.log('AI Suggestion:', data.suggestion);
+        }
+      } else {
+        console.error('Failed to get AI suggestions:', response.status);
+      }
+    } catch (error) {
+      console.error('Error getting AI suggestions:', error);
+    }
+  }, [isAiModeActive, transcript]);
+
   // Load PDF URL
   useEffect(() => {
     if (pdfName) {
@@ -71,11 +128,16 @@ export default function PdfEditor({}: PdfEditorProps) {
 
           instance.addEventListener("annotations.focus", function (annotationFocusEvent) {
             console.log(annotationFocusEvent.annotation.toJS());
+            
+            // Get AI suggestions if AI mode is active
+            if (isAiModeActive) {
+              getAiSuggestions(annotationFocusEvent.annotation.toJS());
+            }
           });
 
           instance.addEventListener("annotations.blur", function (annotationBlurEvent) {
             console.log(annotationBlurEvent.annotation.toJS());
-          })
+          });
         })
         .catch((error: Error) => {
           setError('Failed to load PDF');
@@ -95,7 +157,7 @@ export default function PdfEditor({}: PdfEditorProps) {
         instanceRef.current = null;
       }
     };
-  }, [pdfUrl]);
+  }, [pdfUrl, isAiModeActive, getAiSuggestions]);
 
   const handleSave = async () => {
     if (!instanceRef.current) {
