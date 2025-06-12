@@ -17,6 +17,8 @@ export default function PdfEditor({}: PdfEditorProps) {
   const instanceRef = useRef<any>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  const transcriptRef = useRef<string>('');
+  const isAiModeActiveRef = useRef<boolean>(false);
   
   const [pdfUrl, setPdfUrl] = useState<string>('');
   const [isLoading, setIsLoading] = useState(true);
@@ -24,6 +26,7 @@ export default function PdfEditor({}: PdfEditorProps) {
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'success' | 'error'>('idle');
   const [error, setError] = useState<string>('');
   const [isAiModeActive, setIsAiModeActive] = useState(false);
+  const [aiSuggestion, setAiSuggestion] = useState<string>('');
 
   // Transcription hook
   const {
@@ -36,6 +39,80 @@ export default function PdfEditor({}: PdfEditorProps) {
     clearTranscript,
     error: transcriptionError
   } = useRealtimeTranscription();
+
+  // Update refs when values change
+  useEffect(() => {
+    transcriptRef.current = transcript;
+  }, [transcript]);
+
+  useEffect(() => {
+    isAiModeActiveRef.current = isAiModeActive;
+  }, [isAiModeActive]);
+
+  // Function to get AI suggestions that doesn't depend on transcript in closure
+  const getAiSuggestionsWithCurrentData = useCallback(async (annotationData?: any) => {
+    const currentTranscript = transcriptRef.current;
+    const currentIsAiModeActive = isAiModeActiveRef.current;
+    
+    if (!currentIsAiModeActive) return;
+
+    try {
+      let screenImage = null;
+      
+      // Capture current screen if we have an active stream
+      if (streamRef.current) {
+        const canvas = document.createElement('canvas');
+        const video = document.createElement('video');
+        
+        // Create a new stream from the current one to capture a frame
+        const track = streamRef.current.getVideoTracks()[0];
+        if (track) {
+          video.srcObject = new MediaStream([track]);
+          video.play();
+          
+          await new Promise(resolve => {
+            video.onloadedmetadata = () => {
+              canvas.width = video.videoWidth;
+              canvas.height = video.videoHeight;
+              const ctx = canvas.getContext('2d');
+              ctx?.drawImage(video, 0, 0);
+              screenImage = canvas.toDataURL('image/jpeg', 0.8);
+              resolve(null);
+            };
+          });
+        }
+      }
+
+      const response = await fetch('/api/suggestions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          transcript: currentTranscript || '',
+          screenImage,
+          annotationData // Include the annotation data for context
+        }),
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        console.log('AI Suggestions Response:', data);
+        if (data.suggestion && data.suggestion !== 'NO_SUGGESTION') {
+          console.log('AI Suggestion:', data.suggestion);
+          setAiSuggestion(data.suggestion);
+        } else {
+          setAiSuggestion('');
+        }
+      } else {
+        console.error('Failed to get AI suggestions:', response.status);
+        setAiSuggestion('');
+      }
+    } catch (error) {
+      console.error('Error getting AI suggestions:', error);
+      setAiSuggestion('');
+    }
+  }, []); // Empty dependency array since we use refs for current values
 
   // Load PDF URL
   useEffect(() => {
@@ -68,7 +145,22 @@ export default function PdfEditor({}: PdfEditorProps) {
         .then((instance) => {
           instanceRef.current = instance;
           setIsLoading(false);
-          console.log('NutrientViewer instance', instance);
+
+          instance.addEventListener("annotations.focus", function (annotationFocusEvent) {
+            console.log(annotationFocusEvent.annotation.toJS());
+            
+            // Get AI suggestions if AI mode is active - using function that accesses current values
+            getAiSuggestionsWithCurrentData(annotationFocusEvent.annotation.toJS());
+          });
+
+          instance.addEventListener("annotations.blur", function (annotationBlurEvent) {
+            console.log(annotationBlurEvent.annotation.toJS());
+            
+            // Clear AI suggestion when field loses focus - check current AI mode state
+            if (isAiModeActiveRef.current) {
+              setAiSuggestion('');
+            }
+          });
         })
         .catch((error: Error) => {
           setError('Failed to load PDF');
@@ -88,7 +180,7 @@ export default function PdfEditor({}: PdfEditorProps) {
         instanceRef.current = null;
       }
     };
-  }, [pdfUrl]);
+  }, [pdfUrl, isAiModeActive]);
 
   const handleSave = async () => {
     if (!instanceRef.current) {
@@ -359,7 +451,7 @@ export default function PdfEditor({}: PdfEditorProps) {
                 )}
                 
                 <div 
-                  className="h-[calc(80vh-200px)] overflow-y-auto p-3 bg-muted rounded-md text-sm"
+                  className="h-[calc(80vh-200px)] overflow-y-auto p-3 bg-muted rounded-md text-sm mb-3"
                   style={{ minHeight: "400px" }}
                 >
                   <pre className="whitespace-pre-wrap font-mono text-xs leading-relaxed">
@@ -377,7 +469,7 @@ export default function PdfEditor({}: PdfEditorProps) {
                 </div>
                 
                 {/* Status indicator */}
-                <div className="mt-3 flex items-center justify-between text-xs text-muted-foreground">
+                <div className="mb-3 flex items-center justify-between text-xs text-muted-foreground">
                   <div className="flex items-center gap-2">
                     <Mic className="w-3 h-3" />
                     <span>
@@ -390,6 +482,21 @@ export default function PdfEditor({}: PdfEditorProps) {
                     }`} />
                     <span>{sessionStatus}</span>
                   </div>
+                </div>
+                
+                {/* AI Suggestion Section - Fixed height to prevent layout shift */}
+                <div className="h-20 overflow-hidden">
+                  {aiSuggestion && (
+                    <div className="p-3 bg-blue-50 border border-blue-200 rounded-md">
+                      <div className="flex items-start gap-2">
+                        <Brain className="w-4 h-4 text-blue-600 mt-0.5 flex-shrink-0" />
+                        <div>
+                          <p className="text-xs font-medium text-blue-800 mb-1">AI Suggestion</p>
+                          <p className="text-xs text-blue-700 leading-relaxed">{aiSuggestion}</p>
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </div>
               </CardContent>
             </Card>
